@@ -1,0 +1,153 @@
+module counter(                                   //顶层模块的设计
+    input clk, rst,                               //系统时钟信号端口，以及复位端口
+    input en,                                     //  自增计数器的使能端，即暂停键
+    output [6:0] sseg,
+    output [7:0] an
+    );
+    wire [3:0] one, ten, hun;
+    wire [7:0] sum;
+    upcounter count1(                              //调用自增计数器模块
+        .reset_n(rst), .clk(clk),.en(en),
+        .q(sum)
+    );
+
+bintobcd8 bin_bcd8_1(                               //调用2进制转BCD码模块
+          .clk(clk),
+         .rst(rst), 
+         .bin(sum),
+         .one(one),
+         .ten(ten),
+         .hun(hun)
+         );
+
+scan_seg_disp scan_seg_disp_1(                         //调用数码管显示模块
+         .clk(clk),
+         .rst(rst), 
+         .one(one),
+         .ten(ten),
+         .hun(hun),
+         .an(an), 
+         .sseg(sseg)
+         );
+endmodule 
+
+module bintobcd8(
+    input clk, rst,
+    input [7:0] bin,                            //需要转换的二进制
+    output reg [3:0]one,ten,hun);
+    reg [17:0] shift_reg;                        
+    reg [3:0] count;                             //移位计数器
+
+    always@(posedge clk, posedge rst)
+    if(rst) begin                                 //异步复位
+        one=0;
+        ten=0;
+        hun=0;
+        shift_reg=0;
+        count=0;
+        end
+	else begin
+	 	if (count == 0)
+        shift_reg = {10'd0, bin};                 //数据拓展为18位
+        if (count < 4'd8) begin
+            count = count+1;
+            if (shift_reg[11:8]>4)                                    //对表示 百位/十位/个位 的连续4bit数据判断大小
+                shift_reg[11:8]= shift_reg[11:8]+2'b11;               //大于4, 则进行加3移位处理
+            if (shift_reg[15:12]>4)                                   
+                shift_reg[15:12] = shift_reg[15:12]+2'b11;
+        shift_reg[17:1] = shift_reg[16:0];
+        end
+        else if (count==4'd8)  begin                                   //位移8次后取结果
+            one= shift_reg[11:8];
+            ten = shift_reg[15:12];
+            hun= {2'b00,shift_reg[17:16]};                            //将hun补足4位
+            count = count+1;
+            end
+            else 
+            count = count-9;                                         //count置0
+        end
+endmodule
+
+
+module scan_seg_disp (
+    input clk, rst,
+    input [3:0] one, ten, hun,
+    output reg [7:0] an,
+    output reg [6:0] sseg
+    );
+
+    localparam N=20;                                   //N 取 20，对 clk 分频
+    reg [N-1:0] cnt;
+    reg [3:0] hex;
+
+    always @(posedge clk , posedge rst)
+    begin
+        if(rst) begin
+            cnt = 0;  
+            hex = 4'd10;                               //复位时，hex=10，数码管不显示
+        end
+    else begin
+        cnt = cnt + 1;
+        case (cnt[N-1:N-2])                            //取最高两位进行数据选择，分频显示不同位的数字
+        2'b00:begin
+         hex = one;
+        an = 8'b11111110;
+        end
+        2'b10:begin
+        hex = ten;
+        an = 8'b11111101;
+        end
+        2'b11:begin
+        hex = hun;
+        an = 8'b11111011;
+        end
+        endcase
+       end
+	end
+
+    always@ (*)                                          //always模块，对sseg进行赋值
+        case(hex)
+        4'h0:sseg[6:0] = 7'b0000001; 
+        4'h1:sseg[6:0] = 7'b1001111;
+        4'h2:sseg[6:0] = 7'b0010010;
+        4'h3:sseg[6:0] = 7'b0000110;
+        4'h4:sseg[6:0] = 7'b1001100;
+        4'h5:sseg[6:0] = 7'b0100100;
+        4'h6:sseg[6:0] = 7'b0100000;
+        4'h7:sseg[6:0] = 7'b0001111;
+        4'h8:sseg[6:0] = 7'b0000000;
+        4'h9:sseg[6:0] = 7'b0000100;
+        default:
+        sseg[6:0] = 7'b1111111;
+        endcase
+endmodule
+
+module upcounter(
+  input reset_n, clk,en,
+  output reg [7:0] q
+);
+localparam COUNT = 1_0000_0000;                //COUNT取 1_0000_0000，对 clk 分频
+reg [30:0] ms_reg;
+always@(posedge clk)
+    begin
+    if(reset_n)
+        ms_reg <=0;
+    else if(en == 1)
+        begin
+         if(ms_reg< COUNT)
+               ms_reg <= ms_reg + 1;
+          else
+               ms_reg <= 0;
+        end
+    end
+assign ms_tick = (ms_reg == COUNT) ? 1'b1: 1'b0;           //每1秒ms_tick变换一次
+  always@(posedge clk)
+  if (reset_n)    // 异步复位
+      q<=0;
+  else if(ms_tick)                                       //每1秒q的值加1
+        begin
+            if (q<8'd148)                                 //设置模为149
+                q <=q+1;
+            else   q<=0;
+        end
+endmodule
